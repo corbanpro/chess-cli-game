@@ -59,6 +59,7 @@ struct Game {
     black_rook_a_moved: bool,
     black_rook_h_moved: bool,
     en_passant_pawn: Option<Square>,
+    turn: Team,
 }
 #[derive(Debug, Clone, PartialEq, Copy)]
 struct Piece {
@@ -93,9 +94,6 @@ impl Piece {
     }
     fn piece_type(&self) -> PieceType {
         self.piece_type
-    }
-    fn is_white(&self) -> bool {
-        self.team() == White
     }
     fn is_king(&self) -> bool {
         self.piece_type() == King
@@ -164,6 +162,7 @@ impl Game {
             black_rook_a_moved: false,
             black_rook_h_moved: false,
             en_passant_pawn: None,
+            turn: White,
         }
     }
     fn get_board(&self) -> [[Option<Piece>; 8]; 8] {
@@ -171,6 +170,21 @@ impl Game {
     }
     fn get_piece(&self, square: Square) -> Option<Piece> {
         self.get_board()[square.rank()][square.file()]
+    }
+    fn turn(&self) -> Team {
+        self.turn
+    }
+    fn is_white_turn(&self) -> bool {
+        self.turn() == White
+    }
+    fn is_black_turn(&self) -> bool {
+        self.turn() == Black
+    }
+    fn switch_turn(&mut self) {
+        match self.turn() {
+            Black => self.turn = White,
+            White => self.turn = Black,
+        }
     }
     fn find_team_pieces(&self, team: Team) -> Vec<Square> {
         let mut pieces = vec![];
@@ -193,23 +207,40 @@ impl Game {
         }
         panic!("Didn't find {:?} king", team)
     }
-    fn last_rank_pawn_index(&self, is_white_turn: bool) -> Option<usize> {
-        let rank_index = if is_white_turn { 7 } else { 0 };
+    fn last_rank_pawn_index(&self) -> Option<usize> {
+        let rank_index = if self.is_white_turn() { 7 } else { 0 };
         self.get_board()[rank_index]
             .iter()
             .position(|piece| piece.is_some() && piece.unwrap().is_pawn())
     }
-    fn replace_last_rank_pawn(&mut self, is_white_turn: bool, file: usize, piece_type: PieceType) {
-        let rank_index = if is_white_turn { 7 } else { 0 };
-        let team = if is_white_turn { White } else { Black };
-        self.board[rank_index][file] = Some(Piece::new(piece_type, team));
+    fn replace_last_rank_pawn(&mut self, file: usize, piece_type: PieceType) {
+        let rank_index = if self.is_white_turn() { 7 } else { 0 };
+        self.board[rank_index][file] = Some(Piece::new(piece_type, self.turn()));
     }
-
-    fn is_checkmate(&self, is_white_turn: bool) -> bool {
-        let loser_team = if is_white_turn { Black } else { White };
+    fn check_for_checkmate(&self) -> (bool, Option<String>) {
+        let mut error_message = None;
+        if self.is_white_turn() && self.black_in_check() {
+            if self.is_checkmate() {
+                println!("Checkmate");
+                return (true, error_message);
+            }
+            error_message = Some("Red, you're in check!".to_string());
+        } else if self.is_black_turn() && self.white_in_check() {
+            if self.is_checkmate() {
+                println!("Checkmate");
+                return (true, error_message);
+            }
+            error_message = Some("Blue, you're in check!".to_string());
+        } else {
+            error_message = None;
+        }
+        return (false, error_message);
+    }
+    fn is_checkmate(&self) -> bool {
+        let loser_team = if self.is_white_turn() { Black } else { White };
         let loser_piece_squares = self.find_team_pieces(loser_team);
         for loser_piece_sq in loser_piece_squares {
-            if self.get_legal_moves(is_white_turn, loser_piece_sq).len() > 0 {
+            if self.get_legal_moves(loser_piece_sq).len() > 0 {
                 return false;
             }
         }
@@ -218,10 +249,9 @@ impl Game {
     fn white_in_check(&self) -> bool {
         let black_piece_squares = self.find_team_pieces(Black);
         let white_king_sq = &self.find_king(White);
-        let is_white_turn = false;
         for black_piece_sq in black_piece_squares {
             if self
-                .get_possible_moves(is_white_turn, black_piece_sq)
+                .get_possible_moves(Black, black_piece_sq)
                 .contains(white_king_sq)
             {
                 return true;
@@ -232,10 +262,9 @@ impl Game {
     fn black_in_check(&self) -> bool {
         let white_piece_squares = self.find_team_pieces(White);
         let black_king_sq = &self.find_king(Black);
-        let is_white_turn = true;
         for white_piece_sq in white_piece_squares {
             if self
-                .get_possible_moves(is_white_turn, white_piece_sq)
+                .get_possible_moves(White, white_piece_sq)
                 .contains(black_king_sq)
             {
                 return true;
@@ -335,7 +364,7 @@ impl Game {
         }
         potential_moves
     }
-    fn get_king_moves(&self, start_sq: Square, is_white_turn: bool) -> Vec<Square> {
+    fn get_king_moves(&self, start_sq: Square) -> Vec<Square> {
         let start_rank = start_sq.rank() as i32;
         let start_file = start_sq.file() as i32;
 
@@ -355,7 +384,7 @@ impl Game {
         }
 
         // castle
-        if is_white_turn && !self.white_king_moved {
+        if self.is_white_turn() && !self.white_king_moved {
             if !self.white_rook_a_moved
                 && self.get_piece(Square::new(0, 1)).is_none()
                 && self.get_piece(Square::new(0, 2)).is_none()
@@ -369,7 +398,7 @@ impl Game {
             {
                 potential_moves.push(Square::new(0, 6));
             }
-        } else if !is_white_turn && !self.black_king_moved {
+        } else if self.is_black_turn() && !self.black_king_moved {
             if !self.black_rook_a_moved
                 && self.get_piece(Square::new(7, 1)).is_none()
                 && self.get_piece(Square::new(7, 2)).is_none()
@@ -417,13 +446,13 @@ impl Game {
     fn get_rook_moves(&self, start_sq: Square) -> Vec<Square> {
         self.get_straight_moves(start_sq)
     }
-    fn get_pawn_moves(&self, is_white_turn: bool, start_sq: Square) -> Vec<Square> {
+    fn get_pawn_moves(&self, start_sq: Square) -> Vec<Square> {
         let mut potential_moves = vec![];
 
         let start_rank = start_sq.rank() as i32;
         let start_file = start_sq.file() as i32;
-        let unmoved_rank = if is_white_turn { 1 } else { 6 };
-        let move_direction = if is_white_turn { 1 } else { -1 };
+        let unmoved_rank = if self.is_white_turn() { 1 } else { 6 };
+        let move_direction = if self.is_white_turn() { 1 } else { -1 };
         let single_move_rank = start_rank + move_direction;
         let double_move_rank = single_move_rank + move_direction;
 
@@ -467,24 +496,24 @@ impl Game {
 
         potential_moves
     }
-    fn get_possible_moves(&self, is_white_turn: bool, start_sq: Square) -> Vec<Square> {
+    fn get_possible_moves(&self, team: Team, start_sq: Square) -> Vec<Square> {
         let start_piece = self.get_piece(start_sq);
 
         if start_piece.is_none() {
             return vec![];
         }
         let start_piece = start_piece.unwrap();
-        if start_piece.is_white() != is_white_turn {
+        if start_piece.team() != team {
             return vec![];
         }
 
         let mut possible_moves: Vec<Square> = match start_piece.piece_type() {
-            PieceType::King => self.get_king_moves(start_sq, is_white_turn),
-            PieceType::Queen => self.get_queen_moves(start_sq),
-            PieceType::Bishop => self.get_bishop_moves(start_sq),
-            PieceType::Knight => self.get_knight_moves(start_sq),
-            PieceType::Rook => self.get_rook_moves(start_sq),
-            PieceType::Pawn => self.get_pawn_moves(is_white_turn, start_sq),
+            King => self.get_king_moves(start_sq),
+            Queen => self.get_queen_moves(start_sq),
+            Bishop => self.get_bishop_moves(start_sq),
+            Knight => self.get_knight_moves(start_sq),
+            Rook => self.get_rook_moves(start_sq),
+            Pawn => self.get_pawn_moves(start_sq),
         };
 
         possible_moves.retain(|target_sq| {
@@ -499,15 +528,15 @@ impl Game {
 
         possible_moves
     }
-    fn get_legal_moves(&self, is_white_turn: bool, start_sq: Square) -> Vec<Square> {
-        let mut legal_moves = self.get_possible_moves(is_white_turn, start_sq);
+    fn get_legal_moves(&self, start_sq: Square) -> Vec<Square> {
+        let mut legal_moves = self.get_possible_moves(self.turn(), start_sq);
 
         legal_moves.retain(|possible_move| {
             // cannot move into check
             let test_game = self.move_piece_test(start_sq, *possible_move);
 
-            if (is_white_turn && test_game.white_in_check())
-                || (!is_white_turn && test_game.black_in_check())
+            if (self.is_white_turn() && test_game.white_in_check())
+                || (self.is_black_turn() && test_game.black_in_check())
             {
                 return false;
             }
@@ -516,23 +545,16 @@ impl Game {
 
         legal_moves
     }
-    fn move_piece(
-        &mut self,
-        is_white_turn: bool,
-        start_sq: Square,
-        target_sq: Square,
-    ) -> Result<(), String> {
-        if !self
-            .get_legal_moves(is_white_turn, start_sq)
-            .contains(&target_sq)
-        {
+    fn move_piece(&mut self, start_sq: Square, target_sq: Square) -> Result<(), String> {
+        if !self.get_legal_moves(start_sq).contains(&target_sq) {
             return Err("Error: Invalid Move".to_string());
         }
         let piece = self.board[start_sq.rank()][start_sq.file()].unwrap();
 
         // castle
         if piece.is_king() && start_sq.file_diff(target_sq) > 1 {
-            if (is_white_turn && self.white_in_check()) || (!is_white_turn && self.black_in_check())
+            if (self.is_white_turn() && self.white_in_check())
+                || (self.is_black_turn() && self.black_in_check())
             {
                 return Err("You cannot castle while in check".to_string());
             }
@@ -540,8 +562,8 @@ impl Game {
             if target_sq.file() == 6 {
                 let test_move = self.move_piece_test(start_sq, Square::new(target_sq.rank(), 5));
 
-                if (is_white_turn && test_move.white_in_check())
-                    || (!is_white_turn && test_move.black_in_check())
+                if (self.is_white_turn() && test_move.white_in_check())
+                    || (self.is_black_turn() && test_move.black_in_check())
                 {
                     return Err("You cannot castle through check".to_string());
                 }
@@ -551,8 +573,9 @@ impl Game {
                 let test_move_1 = self.move_piece_test(start_sq, Square::new(target_sq.rank(), 2));
                 let test_move_2 = self.move_piece_test(start_sq, Square::new(target_sq.rank(), 3));
 
-                if (is_white_turn && (test_move_1.white_in_check() || test_move_2.white_in_check()))
-                    || (!is_white_turn
+                if (self.is_white_turn()
+                    && (test_move_1.white_in_check() || test_move_2.white_in_check()))
+                    || (self.is_black_turn()
                         && (test_move_1.black_in_check() || test_move_2.black_in_check()))
                 {
                     return Err("You cannot castle through check".to_string());
@@ -609,19 +632,23 @@ impl Game {
         test_game.board[target_sq.rank][target_sq.file] = piece;
         test_game
     }
-    fn display_board(&self, is_whites_turn: bool) {
+    fn display_board(&self) {
         println!("   +----+----+----+----+----+----+----+----+");
         let mut board = self.get_board().clone();
 
-        if is_whites_turn {
+        if self.is_white_turn() {
             board.reverse();
         }
 
         for (index, rank) in board.iter().enumerate() {
-            let rank_label = if is_whites_turn { 8 - index } else { index + 1 };
+            let rank_label = if self.is_white_turn() {
+                8 - index
+            } else {
+                index + 1
+            };
             print!("{}  ", rank_label);
             let mut rank = rank.to_owned();
-            if !is_whites_turn {
+            if self.is_black_turn() {
                 rank.reverse();
             }
             for square in rank.iter() {
@@ -629,7 +656,7 @@ impl Game {
             }
             println!("|\n   +----+----+----+----+----+----+----+----+");
         }
-        if is_whites_turn {
+        if self.is_white_turn() {
             println!("     a    b    c    d    e    f    g    h\n")
         } else {
             println!("     h    g    f    e    d    c    b    a\n")
@@ -653,7 +680,7 @@ fn parse_coords(input: &str) -> Result<(Square, Square), String> {
     Ok((start_sq, target_sq))
 }
 
-fn handle_pawn_on_last_rank(game: &mut Game, is_whites_turn: bool, pawn_file: usize) {
+fn handle_pawn_on_last_rank(game: &mut Game, pawn_file: usize) {
     loop {
         println!("Congrats! You got a pawn to the last rank. Which piece would you like:\na) Queen\nb) Rook\nc) Bishop\nd) Knight");
         let mut input = "".to_string();
@@ -666,33 +693,33 @@ fn handle_pawn_on_last_rank(game: &mut Game, is_whites_turn: bool, pawn_file: us
         }
         input = input.trim().to_string();
         let replacement_piece = match &input[..] {
-            "a" => PieceType::Queen,
-            "b" => PieceType::Rook,
-            "c" => PieceType::Bishop,
-            "d" => PieceType::Knight,
+            "a" => Queen,
+            "b" => Rook,
+            "c" => Bishop,
+            "d" => Knight,
             _ => {
                 println!("{}", "Input Error: Pick from the listed options".red());
                 continue;
             }
         };
-        game.replace_last_rank_pawn(is_whites_turn, pawn_file, replacement_piece);
+        game.replace_last_rank_pawn(pawn_file, replacement_piece);
         break;
     }
 }
 
 fn main() {
     let mut game = Game::init();
-    let mut is_whites_turn = true;
     let mut error_message: Option<String> = None;
+    let was_checkmate_win;
 
     let white_lost = loop {
-        game.display_board(is_whites_turn);
+        game.display_board();
         if let Some(error_message) = error_message {
             println!("{}\n", format!("{error_message}").red().bold());
         }
         println!(
             "{}, your turn! Enter the coordinate of the piece you want to move followed by the coordinate of the target square",
-            if is_whites_turn { "Blue" } else { "Red" }
+            if game.is_white_turn() { "Blue" } else { "Red" }
         );
 
         let mut input = String::new();
@@ -705,7 +732,8 @@ fn main() {
         }
         input = input.trim().to_string();
         if input == "q" {
-            break is_whites_turn;
+            was_checkmate_win = false;
+            break game.is_white_turn();
         }
 
         let (start_sq, target_sq) = match parse_coords(&input) {
@@ -716,39 +744,34 @@ fn main() {
             }
         };
 
-        if let Err(e) = game.move_piece(is_whites_turn, start_sq, target_sq) {
+        if let Err(e) = game.move_piece(start_sq, target_sq) {
             error_message = Some(format!("{e}"));
             continue;
         }
 
-        let last_rank_pawn = game.last_rank_pawn_index(is_whites_turn);
-        if last_rank_pawn.is_some() {
-            handle_pawn_on_last_rank(&mut game, is_whites_turn, last_rank_pawn.unwrap())
+        let has_last_rank_pawn = game.last_rank_pawn_index();
+        if let Some(last_rank_pawn_index) = has_last_rank_pawn {
+            handle_pawn_on_last_rank(&mut game, last_rank_pawn_index)
         }
 
-        if is_whites_turn && game.black_in_check() {
-            if game.is_checkmate(is_whites_turn) {
-                break !is_whites_turn;
-            }
-            error_message = Some("Red, you're in check!".to_string());
-        } else if !is_whites_turn && game.white_in_check() {
-            if game.is_checkmate(is_whites_turn) {
-                break !is_whites_turn;
-            }
-            error_message = Some("Blue, you're in check!".to_string());
-        } else {
-            error_message = None;
+        let (is_checkmate, error_msg) = game.check_for_checkmate();
+        if is_checkmate {
+            was_checkmate_win = true;
+            break !game.is_white_turn();
         }
+        error_message = error_msg;
 
-        is_whites_turn = !is_whites_turn;
+        game.switch_turn();
     };
 
-    game.display_board(is_whites_turn);
+    game.display_board();
+
+    if was_checkmate_win {
+        println!("Checkmate!!")
+    }
 
     let winner = if white_lost { "Red" } else { "Blue" };
-    println!("\nCongratulations {}!!", winner);
+    println!("Congratulations {}!!", winner);
 
     println!("Thanks for playing!!")
 }
-
-// TODO checkmate is broken
