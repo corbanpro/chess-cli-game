@@ -12,7 +12,7 @@ fn get_piece_char(piece: &Option<Piece>) -> ColoredString {
         Rook => "♜",
         Bishop => "♝",
         Knight => "♞",
-        Pawn => "♟",
+        Pawn => "♙",
     };
     match piece.unwrap().team() {
         Black => char.red(),
